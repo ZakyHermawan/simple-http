@@ -7,22 +7,71 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <stdlib.h>
 #include <vector>
+#include <unordered_map>
+#include "request.hpp"
 
 const unsigned int MAX_BUFF_LENGTH = 4096;
 
+std::vector<std::string> split_str(std::string& str, std::string& delimiter) {
+  size_t pos = 0, curr_line = 0;
+  std::string token;
+
+  std::vector<std::string> result;
+  while ((pos = str.find(delimiter)) != std::string::npos) {
+      token = str.substr(0, pos);
+      result.push_back(token);
+      str.erase(0, pos + delimiter.length());
+  }
+  result.push_back(str);
+  str.erase();
+  return result;
+}
 
 void request_handler(int client_fd) {
   while(true) {
     char* tmp_buffer = (char*)malloc(sizeof(char) * MAX_BUFF_LENGTH);
-    while(recv(client_fd, tmp_buffer, MAX_BUFF_LENGTH, 0)) {
-      std::string request{tmp_buffer};
+    Request request;
+    size_t recv_len;
+    do {
+      int recv_len = recv(client_fd, tmp_buffer, MAX_BUFF_LENGTH, 0);
+      if(recv_len == -1) {
+        std::cerr << "error while receiving data\n";
+        break;
+      }
+      std::string request_str{tmp_buffer};
       std::string response;
-      if(true) {
-        response = "HTTP/1.1 200 OK\r\n\r\n";
+
+      std::string delimiter = "\r\n";
+      std::string space = " ";
+      size_t pos = 0;
+      
+      std::string token;
+      std::vector<std::string> splitted = split_str(request_str, delimiter);
+      std::vector<std::string> reqline = split_str(splitted[0], space);
+      
+      request.set_header(reqline[0], reqline[1], reqline[2]);
+
+      if(request.get_method() == "GET") {
+        if(request.get_path() == "/") {
+          response = "HTTP/1.1 200 OK\r\n\r\n";
+        }
+        else {
+          response = "HTTP/1.1 404 Not Found\r\n\r\n";
+        }
+      }
+
+      for(auto a: reqline) {
+        std::cout << a << " ";
+      }
+      for(auto line: splitted) {
+        std::cout << line << std::endl;
       }
       send(client_fd, response.c_str(), response.size(), 0);
-    }
+      break;
+    } while (recv_len);
+
     break;
   }
 }
