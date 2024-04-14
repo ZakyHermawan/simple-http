@@ -10,10 +10,17 @@
 #include <stdlib.h>
 #include <thread>
 #include <vector>
+#include <memory>
+#include <fstream>
+#include <sstream>
+#include <shared_mutex>
 #include <unordered_map>
 #include "request.hpp"
 
 const unsigned int MAX_BUFF_LENGTH = 4096;
+
+std::shared_ptr<std::unordered_map<std::string, std::string>> ctx;
+std::shared_mutex ctx_mutex;
 
 std::vector<std::string> split_str(std::string& str, std::string& delimiter) {
   size_t pos = 0, curr_line = 0;
@@ -34,13 +41,8 @@ void request_handler(int client_fd) {
   while(true) {
     char* tmp_buffer = (char*)malloc(sizeof(char) * MAX_BUFF_LENGTH);
     Request request;
-    size_t recv_len;
-    do {
-      int recv_len = recv(client_fd, tmp_buffer, MAX_BUFF_LENGTH, 0);
-      if(recv_len == -1) {
-        std::cerr << "error while receiving data\n";
-        break;
-      }
+
+    while(recv(client_fd, tmp_buffer, MAX_BUFF_LENGTH, 0)) {
       std::string request_str{tmp_buffer};
       std::string response;
 
@@ -92,6 +94,46 @@ void request_handler(int client_fd) {
           response_builder.set_body(user_agent);
           response = response_builder.raw_request();
         }
+        else if(strncmp(request.get_path().c_str(), "/files/", 7) == 0) {
+          size_t filename_idx = request.get_path().find("/files/") + 7;
+          std::string filename = request.get_path().substr(filename_idx);
+          std::string dirname = (*ctx)["directory"];
+          if(dirname == "") {
+            Request response_builder;
+            std::vector<std::string> tmp_reqline{"HTTP/1.1", "404", "Not Found"};
+            response_builder.set_request_line(tmp_reqline);
+
+            response = response_builder.raw_request();
+          }
+          std::ifstream infile((*ctx)["directory"] + "/" + filename);
+          if(dirname != "" and infile.fail()) {
+            Request response_builder;
+            std::vector<std::string> tmp_reqline{"HTTP/1.1", "404", "Not Found"};
+            response_builder.set_request_line(tmp_reqline);
+
+            response = response_builder.raw_request();
+          }
+          else {
+            int content_length = 0;
+            infile.seekg (0, infile.end);
+            size_t length = infile.tellg();
+            infile.seekg (0, infile.beg);
+
+            std::string str_body((std::istreambuf_iterator<char>(infile) ),
+              (std::istreambuf_iterator<char>()));
+
+            Request response_builder;
+            std::vector<std::string> tmp_reqline{"HTTP/1.1", "200", "OK"};
+            response_builder.set_request_line(tmp_reqline);
+            response_builder.append_header("Content-Type", "application/octet-stream");
+            response_builder.append_header("Content-Length", std::to_string(str_body.length()).c_str());
+
+            response_builder.set_body(str_body);
+            response = response_builder.raw_request();
+          }
+          infile.close();
+
+        }
         else {
           Request response_builder;
           std::vector<std::string> tmp_reqline{"HTTP/1.1", "404", "Not Found"};
@@ -102,14 +144,24 @@ void request_handler(int client_fd) {
       }
 
       send(client_fd, response.c_str(), response.size(), 0);
-      break;
-    } while (recv_len);
-
-    break;
+      close(client_fd); // only support one time request per connection
+    }
   }
+  
 }
 
 int main(int argc, char **argv) {
+  char* dirname = (char*)malloc(sizeof(dirname)*1024);
+  ctx = std::make_shared<std::unordered_map<std::string, std::string>>();
+  if(argc > 2) {
+    for(int i=0; i<argc; ++i) {
+      if(strcmp(argv[i], "--directory") == 0) {
+        sscanf(argv[i+1], "%s", dirname);
+        (*ctx)["directory"] = dirname;
+      }
+    }
+  }
+
   // You can use print statements as follows for debugging, they'll be visible when running tests.
   std::cout << "Logs from your program will appear here!\n";
 
@@ -153,7 +205,6 @@ int main(int argc, char **argv) {
     if (client_fd == -1) return 1;
     std::cout << "Client connected\n";
     std::thread(request_handler, client_fd).detach();
-
   }
 
   close(server_fd);
