@@ -7,6 +7,25 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <vector>
+
+const unsigned int MAX_BUFF_LENGTH = 4096;
+
+
+void request_handler(int client_fd) {
+  while(true) {
+    char* tmp_buffer = (char*)malloc(sizeof(char) * MAX_BUFF_LENGTH);
+    while(recv(client_fd, tmp_buffer, MAX_BUFF_LENGTH, 0)) {
+      std::string request{tmp_buffer};
+      std::string response;
+      if(true) {
+        response = "HTTP/1.1 200 OK\r\n\r\n";
+      }
+      send(client_fd, response.c_str(), response.size(), 0);
+    }
+    break;
+  }
+}
 
 int main(int argc, char **argv) {
   // You can use print statements as follows for debugging, they'll be visible when running tests.
@@ -47,8 +66,14 @@ int main(int argc, char **argv) {
   
   std::cout << "Waiting for a client to connect...\n";
   
-  accept(server_fd, (struct sockaddr *) &client_addr, (socklen_t *) &client_addr_len);
-  std::cout << "Client connected\n";
+  while(1) {
+    int client_fd = accept(server_fd, (struct sockaddr *) &client_addr, (socklen_t *) &client_addr_len);
+    if (client_fd == -1) return 1;
+    std::cout << "Client connected\n";
+
+    request_handler(client_fd);
+    break;
+  }
   
   close(server_fd);
 
