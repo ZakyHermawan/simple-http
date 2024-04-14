@@ -13,6 +13,7 @@
 #include <memory>
 #include <fstream>
 #include <sstream>
+#include <algorithm>
 #include <shared_mutex>
 #include <unordered_map>
 #include "request.hpp"
@@ -33,121 +34,142 @@ std::vector<std::string> split_str(std::string& str, std::string& delimiter) {
       str.erase(0, pos + delimiter.length());
   }
   result.push_back(str);
-  str.erase();
+
   return result;
 }
 
+std::unordered_map<std::string, std::string> parse_header(std::vector<std::string>& unparsed_request) {
+  std::unordered_map<std::string, std::string> kv;
+
+  while(unparsed_request[0] != "") {
+    std::string kv_delim = ": ";
+    std::vector<std::string> key_val = split_str(unparsed_request[0], kv_delim);
+    unparsed_request.erase(unparsed_request.cbegin());
+    kv[key_val[0]] = key_val[1];
+  }
+
+  unparsed_request.erase(unparsed_request.cbegin());
+  return kv;
+}
+
+std::string get_404_response() {
+  Request response_builder;
+  std::vector<std::string> tmp_reqline{"HTTP/1.1", "404", "Not Found"};
+  response_builder.set_request_line(tmp_reqline);
+
+  return response_builder.raw_request();
+}
+
+std::string get_200_response(const std::string& content_type="", size_t content_length=0, const std::string& body="") {
+  Request response_builder;
+  std::vector<std::string> tmp_reqline{"HTTP/1.1", "200", "OK"};
+  response_builder.set_request_line(tmp_reqline);
+
+  if(content_type != "") {
+    response_builder.append_header("Content-Type", content_type.c_str());
+  }
+  if(content_length != 0) {
+    response_builder.append_header("Content-Length", std::to_string(content_length).c_str());
+  }
+  if(body != "") {
+    response_builder.set_body(body);
+  }
+
+  return response_builder.raw_request();
+}
+
+std::string get_201_response() {
+  Request response_builder;
+  std::vector<std::string> tmp_reqline{"HTTP/1.1", "201", "Created"};
+  response_builder.set_request_line(tmp_reqline);
+
+  return response_builder.raw_request();
+}
+
+
 void request_handler(int client_fd) {
-  while(true) {
-    char* tmp_buffer = (char*)malloc(sizeof(char) * MAX_BUFF_LENGTH);
-    Request request;
+  char* tmp_buffer = (char*)malloc(sizeof(char) * MAX_BUFF_LENGTH);
+  Request request;
 
-    while(recv(client_fd, tmp_buffer, MAX_BUFF_LENGTH, 0)) {
-      std::string request_str{tmp_buffer};
-      std::string response;
+  if(recv(client_fd, tmp_buffer, MAX_BUFF_LENGTH, 0) > 0) {
+    std::string request_str{tmp_buffer};
+    std::string response;
 
-      std::string delimiter = "\r\n";
-      std::string space = " ";
+    std::string delimiter = "\r\n";
+    std::string space = " ";
 
-      std::vector<std::string> splitted_request = split_str(request_str, delimiter);
-      std::vector<std::string> reqline = split_str(splitted_request[0], space);
-      splitted_request.erase(splitted_request.cbegin());
+    std::vector<std::string> splitted_request = split_str(request_str, delimiter);
+    std::vector<std::string> reqline = split_str(splitted_request[0], space);
+    splitted_request.erase(splitted_request.cbegin());
 
-      request.set_request_line(reqline[0], reqline[1], reqline[2]);
-      if(request.get_method() == "GET") {
-        if(request.get_path() == "/") {
-          Request response_builder;
-          std::vector<std::string> tmp_reqline{"HTTP/1.1", "200", "OK"};
-          response_builder.set_request_line(tmp_reqline);
+    request.set_request_line(reqline[0], reqline[1], reqline[2]);
+    if(request.get_method() == "GET") {
+      if(request.get_path() == "/") {
+        response = get_200_response();
+      }
+      else if(strncmp(request.get_path().c_str(), "/echo/", 6) == 0) {
+        size_t body_idx = request.get_path().find("/echo/") + 6;
+        std::string body = request.get_path().substr(body_idx);
+        response = get_200_response("text/plain", body.length(), body);
+      }
+      else if(strncmp(request.get_path().c_str(), "/user-agent", 11) == 0) {
+        std::unordered_map<std::string, std::string> kv = parse_header(splitted_request);
+        std::string user_agent = kv["User-Agent"];
 
-          response = response_builder.raw_request();
+        response = get_200_response("text/plain", user_agent.length(), user_agent);
+      }
+      else if(strncmp(request.get_path().c_str(), "/files/", 7) == 0) {
+        size_t filename_idx = request.get_path().find("/files/") + 7;
+        std::string filename = request.get_path().substr(filename_idx);
+        std::shared_lock<std::shared_mutex> read_lock(ctx_mutex);
+        std::string dirname = (*ctx)["directory"];
+        if(dirname == "") {
+          response = get_404_response();
         }
-        else if(strncmp(request.get_path().c_str(), "/echo/", 6) == 0) {
-          Request response_builder;
-          std::vector<std::string> tmp_reqline{"HTTP/1.1", "200", "OK"};
-          response_builder.set_request_line(tmp_reqline);
-          response_builder.append_header("Content-Type", "text/plain");
-
-          size_t body_idx = request.get_path().find("/echo/") + 6;
-          std::string body = request.get_path().substr(body_idx);
-          response_builder.append_header("Content-Length", std::to_string(body.length()).c_str());
-
-          response_builder.set_body(body);
-          response = response_builder.raw_request();
-        }
-        else if(strncmp(request.get_path().c_str(), "/user-agent", 11) == 0) {
-          std::unordered_map<std::string, std::string> kv;
-          for(size_t i=0; i<splitted_request.size()-3; ++i) {
-            std::string kv_delim = ": ";
-            std::vector<std::string> key_val = split_str(splitted_request[i], kv_delim);
-            kv[key_val[0]] = key_val[1];
-          }
-          std::string user_agent = kv["User-Agent"];
-          
-          Request response_builder;
-          std::vector<std::string> tmp_reqline{"HTTP/1.1", "200", "OK"};
-          response_builder.set_request_line(tmp_reqline);
-
-          response_builder.append_header("Content-Type", "text/plain");
-          response_builder.append_header("Content-Length", std::to_string(user_agent.length()).c_str());
-
-          response_builder.set_body(user_agent);
-          response = response_builder.raw_request();
-        }
-        else if(strncmp(request.get_path().c_str(), "/files/", 7) == 0) {
-          size_t filename_idx = request.get_path().find("/files/") + 7;
-          std::string filename = request.get_path().substr(filename_idx);
-          std::string dirname = (*ctx)["directory"];
-          if(dirname == "") {
-            Request response_builder;
-            std::vector<std::string> tmp_reqline{"HTTP/1.1", "404", "Not Found"};
-            response_builder.set_request_line(tmp_reqline);
-
-            response = response_builder.raw_request();
-          }
-          std::ifstream infile((*ctx)["directory"] + "/" + filename);
-          if(dirname != "" and infile.fail()) {
-            Request response_builder;
-            std::vector<std::string> tmp_reqline{"HTTP/1.1", "404", "Not Found"};
-            response_builder.set_request_line(tmp_reqline);
-
-            response = response_builder.raw_request();
-          }
-          else {
-            int content_length = 0;
-            infile.seekg (0, infile.end);
-            size_t length = infile.tellg();
-            infile.seekg (0, infile.beg);
-
-            std::string str_body((std::istreambuf_iterator<char>(infile) ),
-              (std::istreambuf_iterator<char>()));
-
-            Request response_builder;
-            std::vector<std::string> tmp_reqline{"HTTP/1.1", "200", "OK"};
-            response_builder.set_request_line(tmp_reqline);
-            response_builder.append_header("Content-Type", "application/octet-stream");
-            response_builder.append_header("Content-Length", std::to_string(str_body.length()).c_str());
-
-            response_builder.set_body(str_body);
-            response = response_builder.raw_request();
-          }
-          infile.close();
-
+        std::ifstream infile((*ctx)["directory"] + "/" + filename);
+        if(dirname != "" and infile.fail()) {
+          response = get_404_response();
         }
         else {
-          Request response_builder;
-          std::vector<std::string> tmp_reqline{"HTTP/1.1", "404", "Not Found"};
-          response_builder.set_request_line(tmp_reqline);
+          int content_length = 0;
+          infile.seekg (0, infile.end);
+          size_t length = infile.tellg();
+          infile.seekg (0, infile.beg);
 
-          response = response_builder.raw_request();
+          std::string str_body((std::istreambuf_iterator<char>(infile)),
+            (std::istreambuf_iterator<char>()));
+          response = get_200_response("application/octet-stream", str_body.length(), str_body);
+        }
+        infile.close();
+      }
+      else {
+        response = get_404_response();
+      }
+    }
+    else if(request.get_method() == "POST") {
+      if(strncmp(request.get_path().c_str(), "/files/", 7) == 0) {
+        size_t filename_idx = request.get_path().find("/files/") + 7;
+        std::string filename = request.get_path().substr(filename_idx);
+
+        std::shared_lock<std::shared_mutex> read_lock(ctx_mutex);
+        std::string dirname = (*ctx)["directory"];
+        std::ofstream outfile((*ctx)["directory"] + "/" + filename);
+        if(outfile.fail()) {
+          response = get_404_response();
+        }
+        else {
+          std::unordered_map<std::string, std::string> kv = parse_header(splitted_request);
+          std::string body = (splitted_request[0]);
+          splitted_request.erase(splitted_request.cbegin());
+          outfile << body;
+          outfile.close();
+          response = get_201_response();
         }
       }
-
-      send(client_fd, response.c_str(), response.size(), 0);
-      close(client_fd); // only support one time request per connection
     }
+    send(client_fd, response.c_str(), response.size(), 0);
+    close(client_fd); // only support one time request per connection
   }
-  
 }
 
 int main(int argc, char **argv) {

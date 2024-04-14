@@ -17,7 +17,7 @@ public:
   void set_request_line(std::vector<std::string>& reqline);
   void set_request_line(std::string& method, std::string& path, std::string& http_version);
   void append_header(const char* key, const char* val);
-  void set_body(std::string& body);
+  void set_body(const std::string& body);
   std::string get_method();
   std::string get_path();
   std::string raw_request();

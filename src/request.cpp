@@ -19,7 +19,7 @@ void Request::append_header(const char* key, const char* val) {
   m_header[key] = val;
 }
 
-void Request::set_body(std::string& body) {
+void Request::set_body(const std::string& body) {
   m_body = body;
 }
 
