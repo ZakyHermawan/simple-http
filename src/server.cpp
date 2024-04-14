@@ -45,20 +45,39 @@ void request_handler(int client_fd) {
 
       std::string delimiter = "\r\n";
       std::string space = " ";
-      size_t pos = 0;
-      
-      std::string token;
+
       std::vector<std::string> splitted = split_str(request_str, delimiter);
       std::vector<std::string> reqline = split_str(splitted[0], space);
-      
-      request.set_header(reqline[0], reqline[1], reqline[2]);
+
+      request.set_request_line(reqline[0], reqline[1], reqline[2]);
 
       if(request.get_method() == "GET") {
         if(request.get_path() == "/") {
-          response = "HTTP/1.1 200 OK\r\n\r\n";
+          Request response_builder;
+          std::vector<std::string> tmp_reqline{"HTTP/1.1", "200", "OK"};
+          response_builder.set_request_line(tmp_reqline);
+
+          response = response_builder.raw_request();
+        }
+        else if(strncmp(request.get_path().c_str(), "/echo/", 6) == 0) {
+          Request response_builder;
+          std::vector<std::string> tmp_reqline{"HTTP/1.1", "200", "OK"};
+          response_builder.set_request_line(tmp_reqline);
+          response_builder.append_header("Content-Type", "text/plain");
+
+          size_t body_idx = request.get_path().find("/echo/") + 6;
+          std::string body = request.get_path().substr(body_idx);
+          response_builder.append_header("Content-Length", std::to_string(body.length()).c_str());
+
+          response_builder.set_body(body);
+          response = response_builder.raw_request();
         }
         else {
-          response = "HTTP/1.1 404 Not Found\r\n\r\n";
+          Request response_builder;
+          std::vector<std::string> tmp_reqline{"HTTP/1.1", "404", "Not Found"};
+          response_builder.set_request_line(tmp_reqline);
+
+          response = response_builder.raw_request();
         }
       }
 
@@ -93,28 +112,28 @@ int main(int argc, char **argv) {
     std::cerr << "setsockopt failed\n";
     return 1;
   }
-  
+
   struct sockaddr_in server_addr;
   server_addr.sin_family = AF_INET;
   server_addr.sin_addr.s_addr = INADDR_ANY;
   server_addr.sin_port = htons(4221);
-  
+
   if (bind(server_fd, (struct sockaddr *) &server_addr, sizeof(server_addr)) != 0) {
     std::cerr << "Failed to bind to port 4221\n";
     return 1;
   }
-  
+
   int connection_backlog = 5;
   if (listen(server_fd, connection_backlog) != 0) {
     std::cerr << "listen failed\n";
     return 1;
   }
-  
+
   struct sockaddr_in client_addr;
   int client_addr_len = sizeof(client_addr);
-  
+
   std::cout << "Waiting for a client to connect...\n";
-  
+
   while(1) {
     int client_fd = accept(server_fd, (struct sockaddr *) &client_addr, (socklen_t *) &client_addr_len);
     if (client_fd == -1) return 1;
@@ -123,7 +142,7 @@ int main(int argc, char **argv) {
     request_handler(client_fd);
     break;
   }
-  
+
   close(server_fd);
 
   return 0;
