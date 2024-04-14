@@ -9,4 +9,4 @@ add_executable(
   src/server.cpp
 )
 target_include_directories(server PRIVATE include)
-target_link_libraries(server ${PROJECT_NAME})
+target_link_libraries(server ${PROJECT_NAME} pthread)

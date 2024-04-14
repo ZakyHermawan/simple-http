@@ -8,6 +8,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <stdlib.h>
+#include <thread>
 #include <vector>
 #include <unordered_map>
 #include "request.hpp"
@@ -151,9 +152,8 @@ int main(int argc, char **argv) {
     int client_fd = accept(server_fd, (struct sockaddr *) &client_addr, (socklen_t *) &client_addr_len);
     if (client_fd == -1) return 1;
     std::cout << "Client connected\n";
+    std::thread(request_handler, client_fd).detach();
 
-    request_handler(client_fd);
-    break;
   }
 
   close(server_fd);
