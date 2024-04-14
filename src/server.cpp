@@ -46,11 +46,11 @@ void request_handler(int client_fd) {
       std::string delimiter = "\r\n";
       std::string space = " ";
 
-      std::vector<std::string> splitted = split_str(request_str, delimiter);
-      std::vector<std::string> reqline = split_str(splitted[0], space);
+      std::vector<std::string> splitted_request = split_str(request_str, delimiter);
+      std::vector<std::string> reqline = split_str(splitted_request[0], space);
+      splitted_request.erase(splitted_request.cbegin());
 
       request.set_request_line(reqline[0], reqline[1], reqline[2]);
-
       if(request.get_method() == "GET") {
         if(request.get_path() == "/") {
           Request response_builder;
@@ -72,6 +72,25 @@ void request_handler(int client_fd) {
           response_builder.set_body(body);
           response = response_builder.raw_request();
         }
+        else if(strncmp(request.get_path().c_str(), "/user-agent", 11) == 0) {
+          std::unordered_map<std::string, std::string> kv;
+          for(size_t i=0; i<splitted_request.size()-3; ++i) {
+            std::string kv_delim = ": ";
+            std::vector<std::string> key_val = split_str(splitted_request[i], kv_delim);
+            kv[key_val[0]] = key_val[1];
+          }
+          std::string user_agent = kv["User-Agent"];
+          
+          Request response_builder;
+          std::vector<std::string> tmp_reqline{"HTTP/1.1", "200", "OK"};
+          response_builder.set_request_line(tmp_reqline);
+
+          response_builder.append_header("Content-Type", "text/plain");
+          response_builder.append_header("Content-Length", std::to_string(user_agent.length()).c_str());
+
+          response_builder.set_body(user_agent);
+          response = response_builder.raw_request();
+        }
         else {
           Request response_builder;
           std::vector<std::string> tmp_reqline{"HTTP/1.1", "404", "Not Found"};
@@ -81,12 +100,6 @@ void request_handler(int client_fd) {
         }
       }
 
-      for(auto a: reqline) {
-        std::cout << a << " ";
-      }
-      for(auto line: splitted) {
-        std::cout << line << std::endl;
-      }
       send(client_fd, response.c_str(), response.size(), 0);
       break;
     } while (recv_len);
